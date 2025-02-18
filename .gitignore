@@ -6,3 +6,4 @@ samples/
 .env
 logs/
 impex/
+backup/
