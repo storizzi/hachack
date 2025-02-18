@@ -15,7 +15,7 @@ CLIENT_CERT = os.path.join(BASE_DIR, "../certs/client/client-cert.pem")
 CLIENT_KEY = os.path.join(BASE_DIR, "../certs/client/client-key.pem")
 
 # HAC Credentials (Loaded from environment variables or default values)
-HAC_URL = os.getenv("HAC_URL", "https://backgroundprocessing.c2fvm37cl7-wilkoreta1-s1-public.model-t.cc.commerce.ondemand.com/hac")
+HAC_URL = os.getenv("HAC_URL", "http://localhost:9002/hac")
 USERNAME = os.getenv("HAC_USERNAME", "admin")
 PASSWORD = os.getenv("HAC_PASSWORD", "nimda")
 

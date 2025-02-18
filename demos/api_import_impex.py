@@ -15,25 +15,19 @@ CLIENT_CERT = os.path.join(BASE_DIR, "../certs/client/client-cert.pem")
 CLIENT_KEY = os.path.join(BASE_DIR, "../certs/client/client-key.pem")
 
 # HAC Credentials (Loaded from environment variables or default values)
-HAC_URL = os.getenv("HAC_URL", "https://backgroundprocessing.c2fvm37cl7-wilkoreta1-s1-public.model-t.cc.commerce.ondemand.com/hac")
+HAC_URL = os.getenv("HAC_URL", "http://localhost:9002/hac")
 USERNAME = os.getenv("HAC_USERNAME", "admin")
 PASSWORD = os.getenv("HAC_PASSWORD", "nimda")
 
 # Sample ImpEx script
 IMPEX_SCRIPT = """
-# Define variables for catalog, catalogVersion, and brand
-$catalog = wilkoProductCatalog
-$catalogVersion = catalogVersion(CatalogVersion.catalog(Catalog.id[default = $catalog]), CatalogVersion.version[default = Staged])[default = $catalog:Staged]
-$brand = brand(uid)[default = homebase]
-
-# Define language variable
+$catalog = myProductCatalog
+$catalogVersion = catalogVersion(CatalogVersion.catalog(Catalog.id[default=$catalog]), CatalogVersion.version[default=Staged])[default=$catalog:Staged]
 $lang = en
 
-# Insert ProductBrandOverride data with defaults for $catalogVersion and $brand
-INSERT_UPDATE ProductBrandOverride ; $catalogVersion[unique = true] ; $brand ; product(code, $catalogVersion)[unique = true] ; desc[lang = $lang]
-; ; ; P0697357 ; "<p>This Posture Corrector provides gentle back and clavicle support for improved posture and reduced strain. Designed for a comfortable fit under clothing, it&#x27;s perfect for everyday wear at work, home, or on the go. Easily adjustable to your needs, it helps you develop better posture habits and alleviate pain and discomfort. Suitable for both men and women.</p>"
-; ; ; P0697358 ; "<p>Enjoy all-day comfort and improved posture with this generously sized posture corrector. Its design provides excellent clavicle and back support for a secure, comfortable fit, making it ideal for discreet wear under clothing. Perfect for reducing tension and promoting better alignment, whether you&#x27;re sitting at your desk or on the go, this corrector helps you move with greater ease and confidence.</p>"
-; ; ; P0697380 ; "<p>The Instant VersaZone Dual Air Fryer is a kitchen essential, perfect for families. Its 8.5L capacity and two independent cooking zones mean you can prepare delicious, crispy meals for everyone, quickly and efficiently. Enjoy healthier cooking with less oil, while saving time and energy thanks to fast, even heat distribution. Easy to use and clean, it&#x27;s a true kitchen MVP.</p>"
+INSERT_UPDATE Product; code[unique=true]; name[$lang]; description[$lang]; $catalogVersion[unique=true]; ean[allownull=true]; brand
+; 100001 ; Super Widget  ; The latest version of our premium widget. ; ; 1234567890123 ; Acme
+; 100002 ; Budget Widget ; A basic widget at an affordable price.     ; ; 9876543210987 ; BestCo
 """
 
 def import_impex():
