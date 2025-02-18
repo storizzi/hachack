@@ -1,0 +1,21 @@
+# FastAPI and Uvicorn (for running the REST API)
+fastapi
+uvicorn
+
+# Request handling (for interacting with HAC)
+requests
+
+# Parsing HTML (for extracting CSRF tokens and responses)
+beautifulsoup4
+
+# SSL library (to support mTLS)
+pyOpenSSL
+
+# Multipart form handling (for uploading files)
+python-multipart
+
+# Environment variable handling (for loading configuration)
+python-dotenv
+
+# Command-line argument parsing (for running the script)
+argparse
