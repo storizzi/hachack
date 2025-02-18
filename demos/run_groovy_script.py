@@ -7,16 +7,19 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from hac_client import HACClient
 
 # Define HAC instance details
-HAC_URL = "https://localhost:9002/hac"
+HAC_URL = "http://localhost:9002/hac"
 USERNAME = "admin"
 PASSWORD = "nimda"
 
 # Groovy script to execute
 GROOVY_SCRIPT = """
-configurationService = spring.getBean('configurationService')
-storageConnectionString = configurationService.getConfiguration().getString("example.config.key")
-println "Azure Storage Explorer connection string: $storageConnectionString\\n"
-return "$storageConnectionString\\n"
+$catalog = myProductCatalog
+$catalogVersion = catalogVersion(CatalogVersion.catalog(Catalog.id[default=$catalog]), CatalogVersion.version[default=Staged])[default=$catalog:Staged]
+$lang = en
+
+INSERT_UPDATE Product; code[unique=true]; name[$lang]; description[$lang]; $catalogVersion[unique=true]; ean[allownull=true]; brand
+; 100001 ; Super Widget  ; The latest version of our premium widget. ; ; 1234567890123 ; Acme
+; 100002 ; Budget Widget ; A basic widget at an affordable price.     ; ; 9876543210987 ; BestCo
 """
 
 # Create HACClient instance with debug mode ON
