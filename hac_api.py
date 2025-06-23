@@ -4,13 +4,19 @@ import os
 import logging
 from logging.handlers import TimedRotatingFileHandler
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, File, UploadFile, Form
+from fastapi import FastAPI, HTTPException, File, UploadFile, Form, BackgroundTasks, Query
 from pydantic import BaseModel
 from datetime import datetime
+import subprocess
+import time
+from typing import Literal, Dict
 
 from hac_client import HACClient
 
 DEFAULT_TIMEOUT = None
+
+# Load environment variables from .env file (if exists)
+load_dotenv()
 
 env_timeout = os.getenv("HAC_TIMEOUT")
 if env_timeout is not None:
@@ -25,8 +31,14 @@ else:
 IMPEX_DIR = "impex"
 os.makedirs(IMPEX_DIR, exist_ok=True) 
 
-# Load environment variables from .env file (if exists)
-load_dotenv()
+# Set up Tunnelblick VPN script path and timeout
+
+VPN_SCRIPT_PATH = os.getenv("VPN_SCRIPT_PATH", "tunnelblick.zsh")
+VPN_DEFAULT_TIMEOUT = int(os.getenv("VPN_TIMEOUT", "60"))  # seconds
+
+# Stores the original state before we last changed it
+# e.g. { "WorkVPN": "on", "ClientVPN": "off" }
+previous_vpn_states: Dict[str, Literal["on", "off"]] = {}
 
 # Set up logging directory
 LOG_DIR = "logs"
@@ -170,6 +182,119 @@ async def import_impex_file(
 
     logging.warning(f"❌ ImpEx file '{new_filename}' import failed")
     return {"success": False, "impex_result": "Import failed", "impex_details": result.get("impex_details", "Unknown error")}
+
+def _run_vpn_cmd(cmd: str, connection: str) -> str:
+    """
+    Invoke the tunnelblick.zsh script. 
+    cmd: one of "connect", "disconnect", "status".
+    Returns stdout on success; raises HTTPException on failure.
+    """
+    proc = subprocess.run(
+        [VPN_SCRIPT_PATH, cmd, connection],
+        capture_output=True, text=True
+    )
+    if proc.returncode != 0:
+        # include stderr for diagnostics
+        raise HTTPException(
+            status_code=500,
+            detail=f"VPN `{cmd}` failed for '{connection}': {proc.stderr.strip()}"
+        )
+    return proc.stdout.strip()
+
+
+def _get_status(connection: str) -> Literal["on", "off"]:
+    """Return 'on' or 'off' by parsing the status output."""
+    out = _run_vpn_cmd("status", connection).lower()
+    # adjust parsing to your script’s actual output...
+    if "connected" in out:
+        return "on"
+    return "off"
+
+
+def _schedule_revert(connection: str, original: Literal["on","off"], after: int):
+    """
+    Sleeps for `after` seconds, then, if the connection is not in the
+    original state, issues the opposite command to revert.
+    Finally, cleans up the stored state.
+    """
+    time.sleep(after)
+    try:
+        current = _get_status(connection)
+        if current != original:
+            cmd = "disconnect" if original == "off" else "connect"
+            _run_vpn_cmd(cmd, connection)
+    finally:
+        previous_vpn_states.pop(connection, None)
+
+@app.get("/vpn")
+async def vpn_status(
+    connection: str = Query(..., description="Tunnelblick connection name")
+):
+    """
+    Get current VPN status for the given connection.
+    """
+    status = _get_status(connection)
+    return {"connection": connection, "status": status}
+
+
+@app.put("/vpn")
+async def vpn_control(
+    background_tasks: BackgroundTasks,
+    connection: str = Query(..., description="Tunnelblick connection name"),
+    action: Literal["on", "off", "revert"] = Query(
+        ..., description="Desired action: on, off, or revert"
+    ),
+    timeout: int = Query(
+        None, description="Timeout in seconds after which to auto-revert"
+    ),
+):
+    """
+    Change VPN state. Supported actions:
+      - on      : connect if not already connected
+      - off     : disconnect if not already disconnected
+      - revert  : return to the state before our last change
+
+    If action is on/off and timeout is set (or defaults), schedules an
+    automatic revert after that many seconds.
+    """
+    current = _get_status(connection)
+
+    if action == "revert":
+        # No previous state ⇒ invalid
+        if connection not in previous_vpn_states:
+            raise HTTPException(
+                status_code=409,
+                detail=f"No stored state for '{connection}'; cannot revert"
+            )
+        original = previous_vpn_states.pop(connection)
+        if current != original:
+            cmd = "disconnect" if original == "off" else "connect"
+            _run_vpn_cmd(cmd, connection)
+        return {"connection": connection, "status": original, "action": "reverted"}
+
+    # for on/off, map to script commands
+    desired_cmd = "connect" if action == "on" else "disconnect"
+    desired_state = "on" if action == "on" else "off"
+
+    # store previous only if state will actually change
+    if current != desired_state:
+        previous_vpn_states[connection] = current
+        _run_vpn_cmd(desired_cmd, connection)
+    else:
+        # no-op if already in desired state
+        return {"connection": connection, "status": current, "action": "noop"}
+
+    # schedule auto-revert if requested
+    after = timeout if timeout is not None else VPN_DEFAULT_TIMEOUT
+    if after:
+        background_tasks.add_task(_schedule_revert, connection, current, after)
+
+    return {
+        "connection": connection,
+        "status": desired_state,
+        "action": action,
+        "will_revert_in": after
+    }
 
 @app.get("/")
 async def root():
