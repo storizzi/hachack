@@ -6,3 +6,4 @@ certs/
 logs/
 impex/
 backup/
+*.log
