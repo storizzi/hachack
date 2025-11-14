@@ -1,4 +1,4 @@
-# Hac Hack - API for Auto-running Hybris HAC Operations
+# Hac Hack v0.1.0 - API for Auto-running Hybris HAC Operations
 
 A Python library and FastAPI-based HTTP API for automating SAP Commerce / Hybris HAC tasks.
 
@@ -218,4 +218,10 @@ uvicorn hac_api:app --host 0.0.0.0 --port 8037 \
 
 ## License
 
-MIT © Your Company
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+
+## Changelog
+See [CHANGELOG](CHANGELOG.md) for details.
+
+-- Simon Huggins, Storizzi - 14 Nov 2025
