@@ -2,35 +2,63 @@
 
 A Python library and FastAPI-based HTTP API for automating SAP Commerce / Hybris HAC tasks.
 
-## Contents
+**Repository:** [https://github.com/storizzi/hachack](https://github.com/storizzi/hachack)
 
-- [Features](#features)
-- [Prerequisites](#prerequisites)
-- [Environment Variables](#environment-variables)
-- [mTLS Authentication](#mtls-authentication)
-- [Certificate Generation Script](#certificate-generation-script)
-- [API Endpoints](#api-endpoints)
-- [Sample curl Commands](#sample-curl-commands-https-self-signed-cert)
-- [Running the Server](#running-the-server)
-- [VPN Tunnel Management](#vpn-tunnel-management)
-- [Version History](#version-history)
-- [License](#license)
+## Table of Contents
+
+- [Hac Hack - API for Auto-running Hybris HAC Operations](#hac-hack---api-for-auto-running-hybris-hac-operations)
+  - [Table of Contents](#table-of-contents)
+  - [Project Introduction](#project-introduction)
+  - [Features](#features)
+  - [Prerequisites](#prerequisites)
+  - [Environment Variables](#environment-variables)
+  - [mTLS Authentication](#mtls-authentication)
+  - [Certificate Generation Script](#certificate-generation-script)
+    - [Script Path](#script-path)
+    - [Usage](#usage)
+    - [Optional Parameters](#optional-parameters)
+    - [Actions (choose at least one)](#actions-choose-at-least-one)
+    - [What It Does](#what-it-does)
+  - [Usage Approaches](#usage-approaches)
+    - [API Approach](#api-approach)
+    - [Client-Side Python Approach](#client-side-python-approach)
+    - [VPN Tunnel Management](#vpn-tunnel-management)
+  - [Documentation](#documentation)
+    - [API Documentation](#api-documentation)
+    - [Client-Side Usage](#client-side-usage)
+    - [VPN Control](#vpn-control)
+    - [Demo Scripts](#demo-scripts)
+    - [Release Notes](#release-notes)
+  - [License](#license)
+  - [Issues and Feedback](#issues-and-feedback)
+
+## Project Introduction
+
+Hac Hack is a versatile toolkit designed to automate and streamline interactions with SAP Commerce / Hybris HAC (Hybris Administration Console). It provides three complementary approaches to suit different integration scenarios and technical requirements:
+
+1. **API Approach**: A FastAPI-based REST API for language-agnostic integration
+2. **Client-Side Python Approach**: Direct Python library integration for Python applications
+3. **VPN Tunnel Management**: Tools for managing secure VPN connections to HAC instances
+
+This toolkit is designed for developers, system administrators, and DevOps engineers who need to automate HAC operations as part of their CI/CD pipelines, deployment processes, or system administration tasks.
 
 ## Features
 
-* **Authentication**: Login to HAC.
-* **Execute Groovy scripts**: Run arbitrary Groovy code on the HAC.
-* **Import ImpEx scripts**: Submit ImpEx payloads directly.
-* **Upload & import ImpEx files**: POST files for batch data operations.
-* **Health check**: Simple ping endpoint.
-* **VPN tunnel management**: Wrap HAC calls with a VPN tunnel (status/connect/disconnect/revert) — see the [Tunnelblick control script documentation](READMe-tunnelblick.md) for details on the underlying shell script.
+* **Multiple Integration Approaches**: Choose between API, or client-side Python, optionally using direct VPN control
+* **Authentication**: Secure login to HAC with proper session management
+* **Execute Groovy scripts**: Run arbitrary Groovy code on the HAC for system administration
+* **Import ImpEx scripts**: Submit ImpEx payloads directly for data management
+* **Upload & import ImpEx files**: Handle file-based batch data operations
+* **Health monitoring**: Check system status and connectivity
+* **VPN tunnel management**: Secure connectivity with status/connect/disconnect/revert operations
+* **Mutual TLS Authentication**: Enterprise-grade security for all communications
 
 ## Prerequisites
 
 * Python 3.9+
-* `pip install -r requirements.txt`
-* `generate_certificates.zsh` (for mTLS certs)
-* Tunnel control script (e.g. `tunnelblick.zsh`) if you want to control VPN establishment from the endpoint too
+* `pip install -r [`requirements.txt`](requirements.txt)`
+* [`generate_certificates.zsh`](generate_certificates.zsh) (for mTLS certs)
+* Tunnel control script (e.g. [`tunnelblick.zsh`](tunnelblick.zsh)) if you want to control VPN establishment from the endpoint too
 
 ## Environment Variables
 
@@ -70,7 +98,7 @@ Secure your CA directory separately for best practice.
 
 ## Certificate Generation Script
 
-The `generate_certificates.zsh` script automates creation of a private Certificate Authority (CA), plus server and client certificates for mutual TLS authentication.
+The [`generate_certificates.zsh`](generate_certificates.zsh) script automates creation of a private Certificate Authority (CA), plus server and client certificates for mutual TLS authentication.
 
 ### Script Path
 
@@ -127,130 +155,149 @@ Usage: generate_certificates.zsh [<optional params>] [--ca | --server | --client
    * Server: `server/server-key.pem`, `server/server-req.csr`, `server/server-cert.pem`
    * Client: `client/client-key.pem`, `client/client-req.csr`, `client/client-cert.pem`
 
----
+## Usage Approaches
 
-## API Endpoints
+Hac Hack provides three distinct approaches for interacting with HAC, each designed for different use cases and integration scenarios:
 
-| Method | Path                 | Description                              | Parameters                                                                        |
-| ------ | -------------------- | ---------------------------------------- | --------------------------------------------------------------------------------- |
-| GET    | `/ping`              | Health check                             | —                                                                                 |
-| POST   | `/login`             | Login to HAC                             | JSON body: `hac_url`, `username`, `password`                                      |
-| POST   | `/execute_groovy`    | Execute a Groovy script                  | JSON body: `hac_url`, `username`, `password`, `script`                            |
-| POST   | `/import_impex`      | Import an ImpEx script                   | JSON body: `hac_url`, `username`, `password`, `script`                            |
-| POST   | `/import_impex_file` | Upload & import an ImpEx file            | Form-data: `hac_url`, `username`, `password`, `file`, `retain`                    |
-| GET    | `/vpn-service`       | Get VPN tunnel status                    | Query: `connection`                                                               |
-| PUT    | `/vpn-service`       | Connect / disconnect / revert VPN tunnel | Query: `connection`, `action` (`on`/`off`/`revert`), optional `timeout` (seconds) |
+### API Approach
 
-> All endpoints require mutual TLS and return JSON responses.
+The API approach uses a FastAPI-based REST API that provides a language-agnostic interface for HAC operations. This approach is ideal for:
 
-## Sample `curl` Commands (HTTPS, self-signed cert)
+- Multi-language environments and distributed systems
+- Exposing HAC functionality to external systems
+- Centralized authentication and session management
+- Microservice style architecture (i.e. baby API but secured!)
+- Scenarios where direct HAC access needs to be abstracted from client applications - e.g. occasional operational scripts that you don't want to turn into full-blown cronjobs - handy because you can log the responses rather than having them being run directly with no trace of them being run
 
-> Use `-k` to bypass certificate verification in development.
+**Getting Started:**
+- Refer to [`README-api.md`](README-api.md) for comprehensive API documentation
+- Includes detailed endpoint descriptions, request/response formats, and examples
+- Covers authentication, error handling, and best practices
+- Provides demo scripts for representative operations
 
-### 1. Health Check
-
-```sh
-curl -k https://localhost:8037/ping
-```
-
-### 2. Login
-
-```sh
-curl -k -X POST https://localhost:8037/login \
-  -H 'Content-Type: application/json' \
-  -d '{"hac_url":"https://my-hac","username":"user","password":"pass"}'
-```
-
-### 3. Execute Groovy Script
-
-```sh
-curl -k -X POST https://localhost:8037/execute_groovy \
-  -H 'Content-Type: application/json' \
-  -d '{"hac_url":"https://my-hac","username":"user","password":"pass","script":"println(\"Hello HAC\")"}'
-```
-
-### 4. Import ImpEx Script
-
-```sh
-curl -k -X POST https://localhost:8037/import_impex \
-  -H 'Content-Type: application/json' \
-  -d '{"hac_url":"https://my-hac","username":"user","password":"pass","script":"INSERT_UPDATE Catalog; code[unique = true]; name[lang = en];\n; testCatalog; Test Catalog"}'
-```
-
-### 5. Upload & Import ImpEx File
-
-```sh
-curl -k -X POST https://localhost:8037/import_impex_file \
-  -F hac_url=https://my-hac \
-  -F username=user \
-  -F password=pass \
-  -F file=@path/to/products.impex \
-  -F retain=true
-```
-
-### 6. VPN Tunnel — Status
-
-```sh
-curl -k -G https://localhost:8037/vpn-service \
-  --data-urlencode 'connection=MyVPN'
-```
-
-### 7. VPN Tunnel — Connect (default timeout)
-
-```sh
-curl -k -X PUT 'https://localhost:8037/vpn-service?connection=MyVPN&action=on'
-```
-
-### 8. VPN Tunnel — Disconnect (30s timeout)
-
-```sh
-curl -k -X PUT 'https://localhost:8037/vpn-service?connection=MyVPN&action=off&timeout=30'
-```
-
-### 9. VPN Tunnel — Revert to Previous State
-
-```sh
-curl -k -X PUT 'https://localhost:8037/vpn-service?connection=MyVPN&action=revert'
-```
-
-## Running the Server
-
-### Development (HTTP only)
-
-```sh
+**Key Commands:**
+```bash
+# Start the API server
 uvicorn hac_api:app --reload --host 0.0.0.0 --port 8037
+
+# Run API demo scripts
+python demos/api_login_test.py
+python demos/api_import_impex.py
+python demos/api_import_impex_file.py
+python demos/api_run_groovy_script.py
 ```
 
-### Testing with Built-in TLS
+### Client-Side Python Approach
 
-```sh
-uvicorn hac_api:app --host 0.0.0.0 --port 8037 \
-  --ssl-keyfile certs/server/server-key.pem \
-  --ssl-certfile certs/server/server-cert.pem \
-  --ssl-ca-certs certs/ca/ca-cert.pem
+The client-side approach provides direct Python library integration for applications that prefer to interact with HAC without going through a REST API. This approach is ideal for:
+
+- Python-native applications and scripts
+- Direct integration with existing Python codebases
+- Scenarios where REST API overhead is undesirable
+- Applications that need fine-grained control over HAC interactions
+
+**Getting Started:**
+- Refer to [`README-client.md`](README-client.md) for comprehensive client documentation
+- Covers direct HACClient class usage, session management, and CSRF token handling
+- Includes client-side demo scripts and examples
+- Provides best practices for client-side HAC operations
+
+**Key Commands:**
+```bash
+# Run client demo scripts
+python demos/login_test.py
+python demos/import_impex.py
+python demos/import_impex_file.py
+python demos/run_groovy_script.py
 ```
 
-## VPN Tunnel Management
+### VPN Tunnel Management
 
-The VPN integration uses Tunnelblick on macOS. For full details on the underlying shell script (commands, options, exit codes, automation examples), see the [Tunnelblick Control Script documentation](READMe-tunnelblick.md).
+The VPN tunnel management approach provides tools for controlling VPN connections to HAC instances, particularly useful for secure network environments. This approach is ideal for:
 
-Key behaviours of the API VPN endpoints:
+- Secure network environments requiring VPN access
+- Automated VPN connection management
+- Scenarios where HAC instances are behind VPNs
 
-* **Async non-blocking** — VPN operations run asynchronously and do not block the API event loop
-* **Automatic retries** — connect/disconnect operations retry on failure (2 attempts with 3s backoff)
-* **Scheduled reverts** — after a timeout, the VPN reverts to its previous state with aggressive retries (3 attempts, 5s/10s backoff)
-* **Error propagation** — Tunnelblick not running returns HTTP 503, connection not found returns 404, operation timeout returns 504
+**Getting Started:**
+- Refer to [`README-tunnelblick.md`](README-tunnelblick.md) for detailed VPN control documentation
+- Covers Tunnelblick VPN control on macOS
+- Includes installation, setup, and usage examples
+- Provides automation examples and troubleshooting guidance
 
-## Version History
+**Key Commands:**
+```bash
+# Control VPN connections
+./tunnelblick.zsh status "MyVPN"
+./tunnelblick.zsh connect "MyVPN"
+./tunnelblick.zsh disconnect "MyVPN"
+```
 
-See [VERSIONS.md](VERSIONS.md) for the full release history.
+## Documentation
+
+For more detailed information on specific aspects of the project, please refer to the following documentation:
+
+### API Documentation
+
+[`README-api.md`](README-api.md) - Comprehensive guide to the Hac Hack REST API.
+
+This document covers:
+- Complete API endpoint documentation with request/response formats
+- Authentication setup and mutual TLS configuration
+- Detailed usage examples and curl commands
+- API demo scripts and integration patterns
+- Error handling, troubleshooting, and best practices
+- Server deployment and configuration options
+
+### Client-Side Usage
+
+[`README-client.md`](README-client.md) - Comprehensive guide for using the HACClient class directly in Python applications.
+
+This document covers:
+- Direct integration with Python applications without using the REST API
+- Session management and CSRF token handling
+- Client-side demo scripts and examples
+- Best practices for client-side HAC operations
+- Comparison between API and client-side approaches
+- Troubleshooting common issues
+
+### VPN Control
+
+[`README-tunnelblick.md`](README-tunnelblick.md) - Detailed documentation for controlling Tunnelblick VPN connections on macOS.
+
+This document covers:
+- Command-line control of Tunnelblick VPN connections
+- Installation and setup instructions
+- Usage examples for various VPN operations
+- Automation examples and exit codes
+- Troubleshooting common VPN issues
+
+### Demo Scripts
+
+[`demos/README-demos.md`](demos/README-demos.md) - Collection of demo scripts showcasing various HAC operations.
+
+This document contains:
+- Complete demo scripts for both API and client-side approaches
+- Examples of common HAC operations (login, ImpEx import, Groovy execution)
+- Customizable templates for your own automation tasks
+- Best practices and integration patterns
+
+### Release Notes
+
+[`RELEASES.md`](RELEASES.md) - Comprehensive release notes and version history for the Hac Hack project.
+
+This document contains:
+- Detailed changelog for each version release
+- New features and improvements
+- Bug fixes and security updates
+- Breaking changes and migration instructions
+- Version compatibility information
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT
 
-## Changelog
+## Issues and Feedback
 
-See [CHANGELOG](CHANGELOG.md) for details.
-
--- Simon Huggins, Storizzi - 14 Nov 2025 to 12-Feb-2025
+If you encounter any issues or have suggestions for improvements, please report them at:
+[https://github.com/storizzi/hachack/issues](https://github.com/storizzi/hachack/issues)
