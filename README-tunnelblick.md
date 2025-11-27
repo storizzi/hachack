@@ -1,6 +1,6 @@
 # Tunnelblick Control Script
 
-A powerful zsh script for controlling Tunnelblick VPN connections on macOS from the command line.
+A powerful zsh script for controlling Tunnelblick VPN connections on macOS from the command line. The main script is [`tunnelblick.zsh`](tunnelblick.zsh).
 
 ## Features
 
@@ -163,3 +163,9 @@ MIT License
 
 - This script uses AppleScript to control Tunnelblick
 - Inspired by the need for better command-line control of VPN connections on macOS
+
+## Related Documentation
+
+For additional resources and documentation, please refer to:
+
+- [Main Project Documentation](README.md) - General project context and setup information for the Hac Hack project
