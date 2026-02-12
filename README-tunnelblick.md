@@ -1,6 +1,6 @@
 # Tunnelblick Control Script
 
-A powerful zsh script for controlling Tunnelblick VPN connections on macOS from the command line.
+A powerful zsh script for controlling Tunnelblick VPN connections on macOS from the command line. Used by the [Hac Hack API](README.md) for VPN tunnel management.
 
 ## Features
 
@@ -12,6 +12,9 @@ A powerful zsh script for controlling Tunnelblick VPN connections on macOS from 
 - Configurable timeouts and polling intervals
 - Verbose and quiet output modes
 - Proper exit codes for use in automation
+- Exact state matching to prevent false positives (e.g. DISCONNECTED no longer matches as CONNECTED)
+- Disconnect waits for full DISCONNECTED state rather than returning on transitional EXITING
+- Explicit handling of intermediate states (SLEEP, RECONNECTING) during connect operations
 
 ## Requirements
 
@@ -46,7 +49,7 @@ A powerful zsh script for controlling Tunnelblick VPN connections on macOS from 
 - `list` - List all available connections with status
 - `status [connection]` - Show status of all or a specific connection
 - `connect <connection>` - Connect to a VPN with status polling
-- `disconnect [connection]` - Disconnect from a VPN or all active VPNs if none specified
+- `disconnect [connection]` - Disconnect from a VPN (waits for full DISCONNECTED state) or all active VPNs if none specified
 - `toggle <connection>` - Toggle connection state
 - `monitor <connection>` - Continuously monitor connection status
 

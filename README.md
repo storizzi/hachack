@@ -1,6 +1,20 @@
-# Hac Hack v0.1.0 - API for Auto-running Hybris HAC Operations
+# Hac Hack v0.1.1 - API for Auto-running Hybris HAC Operations
 
 A Python library and FastAPI-based HTTP API for automating SAP Commerce / Hybris HAC tasks.
+
+## Contents
+
+- [Features](#features)
+- [Prerequisites](#prerequisites)
+- [Environment Variables](#environment-variables)
+- [mTLS Authentication](#mtls-authentication)
+- [Certificate Generation Script](#certificate-generation-script)
+- [API Endpoints](#api-endpoints)
+- [Sample curl Commands](#sample-curl-commands-https-self-signed-cert)
+- [Running the Server](#running-the-server)
+- [VPN Tunnel Management](#vpn-tunnel-management)
+- [Version History](#version-history)
+- [License](#license)
 
 ## Features
 
@@ -9,7 +23,7 @@ A Python library and FastAPI-based HTTP API for automating SAP Commerce / Hybris
 * **Import ImpEx scripts**: Submit ImpEx payloads directly.
 * **Upload & import ImpEx files**: POST files for batch data operations.
 * **Health check**: Simple ping endpoint.
-* **VPN tunnel management**: Wrap HAC calls with a VPN tunnel (status/connect/disconnect/revert).
+* **VPN tunnel management**: Wrap HAC calls with a VPN tunnel (status/connect/disconnect/revert) — see the [Tunnelblick control script documentation](READMe-tunnelblick.md) for details on the underlying shell script.
 
 ## Prerequisites
 
@@ -127,7 +141,7 @@ Usage: generate_certificates.zsh [<optional params>] [--ca | --server | --client
 | GET    | `/vpn-service`       | Get VPN tunnel status                    | Query: `connection`                                                               |
 | PUT    | `/vpn-service`       | Connect / disconnect / revert VPN tunnel | Query: `connection`, `action` (`on`/`off`/`revert`), optional `timeout` (seconds) |
 
-> 🔒 All endpoints require mutual TLS and return JSON responses.
+> All endpoints require mutual TLS and return JSON responses.
 
 ## Sample `curl` Commands (HTTPS, self-signed cert)
 
@@ -216,12 +230,27 @@ uvicorn hac_api:app --host 0.0.0.0 --port 8037 \
   --ssl-ca-certs certs/ca/ca-cert.pem
 ```
 
+## VPN Tunnel Management
+
+The VPN integration uses Tunnelblick on macOS. For full details on the underlying shell script (commands, options, exit codes, automation examples), see the [Tunnelblick Control Script documentation](READMe-tunnelblick.md).
+
+Key behaviours of the API VPN endpoints:
+
+* **Async non-blocking** — VPN operations run asynchronously and do not block the API event loop
+* **Automatic retries** — connect/disconnect operations retry on failure (2 attempts with 3s backoff)
+* **Scheduled reverts** — after a timeout, the VPN reverts to its previous state with aggressive retries (3 attempts, 5s/10s backoff)
+* **Error propagation** — Tunnelblick not running returns HTTP 503, connection not found returns 404, operation timeout returns 504
+
+## Version History
+
+See [VERSIONS.md](VERSIONS.md) for the full release history.
+
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-
 ## Changelog
+
 See [CHANGELOG](CHANGELOG.md) for details.
 
--- Simon Huggins, Storizzi - 14 Nov 2025
+-- Simon Huggins, Storizzi - 14 Nov 2025 to 12-Feb-2025

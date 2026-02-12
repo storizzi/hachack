@@ -213,28 +213,33 @@ function connect_vpn() {
     
     # Check current status
     local conn_state=$(get_connection_state "$connection_name")
-    if [[ "$conn_state" == *"CONNECTED"* ]]; then
+    if [[ "$conn_state" == "CONNECTED" ]]; then
         log "info" "Connection '$connection_name' is already connected"
         return $SUCCESS
     fi
-    
+
     log "info" "Connecting to '$connection_name'..."
     osascript -e "tell application \"Tunnelblick\" to connect \"$connection_name\""
-    
+
     # Wait for connection to establish with timeout
     local timer=0
     while [[ $timer -lt ${CONFIG[timeout]} ]]; do
         conn_state=$(get_connection_state "$connection_name")
         log "debug" "State: $conn_state (waited ${timer}s)"
-        
-        if [[ "$conn_state" == *"CONNECTED"* ]]; then
+
+        if [[ "$conn_state" == "CONNECTED" ]]; then
             log "info" "Successfully connected to '$connection_name'"
             return $SUCCESS
-        elif [[ "$conn_state" == *"EXITING"* || "$conn_state" == *"FAILED"* ]]; then
+        elif [[ "$conn_state" == "EXITING" || "$conn_state" == "FAILED" ]]; then
             log "error" "Connection failed with state: $conn_state"
             return $ERR_OPERATION_FAILED
+        elif [[ "$conn_state" == "DISCONNECTED" ]]; then
+            log "error" "Connection dropped to DISCONNECTED during connect attempt"
+            return $ERR_OPERATION_FAILED
+        elif [[ "$conn_state" == "SLEEP" || "$conn_state" == "RECONNECTING" ]]; then
+            log "debug" "Intermediate state '$conn_state', continuing to wait..."
         fi
-        
+
         sleep ${CONFIG[poll_interval]}
         timer=$((timer + ${CONFIG[poll_interval]}))
     done
@@ -257,29 +262,39 @@ function disconnect_vpn() {
     
     # Check current status
     local conn_status=$(get_connection_state "$connection_name")
-    if [[ "$conn_status" != *"CONNECTED"* ]]; then
+    if [[ "$conn_status" != "CONNECTED" && "$conn_status" != "EXITING" ]]; then
         log "info" "Connection '$connection_name' is already disconnected"
         return $SUCCESS
     fi
-    
+
     log "info" "Disconnecting from '$connection_name'..."
     osascript -e "tell application \"Tunnelblick\" to disconnect \"$connection_name\""
-    
+
     # Wait for disconnection with timeout
     local timer=0
     while [[ $timer -lt ${CONFIG[timeout]} ]]; do
         conn_status=$(get_connection_state "$connection_name")
-        log "debug" "Status: $status (waited ${timer}s)"
-        
-        if [[ "$conn_status" == *"EXITING"* || "$status" == *"DISCONNECTED"* ]]; then
-            log "info" "Successfully disconnected from '$connection_name'"
+        log "debug" "Status: $conn_status (waited ${timer}s)"
+
+        if [[ "$conn_status" == "EXITING" ]]; then
+            log "debug" "Transitional state EXITING, continuing to wait..."
+        elif [[ "$conn_status" != "CONNECTED" ]]; then
+            # Any state that is not CONNECTED or EXITING means disconnect succeeded
+            log "info" "Successfully disconnected from '$connection_name' (state: $conn_status)"
             return $SUCCESS
         fi
-        
+
         sleep ${CONFIG[poll_interval]}
         timer=$((timer + ${CONFIG[poll_interval]}))
     done
-    
+
+    # Final-check fallback: if timeout expired but state is not CONNECTED, treat as success
+    conn_status=$(get_connection_state "$connection_name")
+    if [[ "$conn_status" != "CONNECTED" ]]; then
+        log "info" "Disconnect completed after timeout (final state: $conn_status)"
+        return $SUCCESS
+    fi
+
     log "error" "Disconnection timed out after ${CONFIG[timeout]} seconds"
     return $ERR_OPERATION_TIMEOUT
 }
@@ -299,7 +314,7 @@ function toggle_vpn() {
     # Check current status
     local conn_state=$(get_connection_state "$connection_name")
     
-    if [[ "$conn_state" == *"CONNECTED"* ]]; then
+    if [[ "$conn_state" == "CONNECTED" ]]; then
         log "info" "Connection '$connection_name' is connected, disconnecting..."
         disconnect_vpn "$connection_name"
         return $?

@@ -1,6 +1,5 @@
 import os
 import requests
-import subprocess
 import argparse
 import logging
 import asyncio
@@ -64,88 +63,140 @@ def get_hac_client(hac_url: str = None, username: str = None, password: str = No
 
 # --- VPN Utility Functions ---
 
-def _run_vpn_cmd(cmd: str, connection: str) -> str:
-    """Invoke Tunnelblick wrapper, treating redundant operations as success."""
+async def _run_vpn_cmd(cmd: str, connection: str, timeout: Optional[int] = None) -> str:
+    """Invoke Tunnelblick wrapper asynchronously, treating redundant operations as success."""
+    args = [VPN_SCRIPT_PATH]
+    if timeout is not None:
+        args.extend(["-t", str(timeout)])
+    args.extend([cmd, connection])
+
     try:
-        proc = subprocess.run(
-            [VPN_SCRIPT_PATH, cmd, connection],
-            capture_output=True, text=True, check=False
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
+        stdout_bytes, stderr_bytes = await proc.communicate()
     except FileNotFoundError:
         raise HTTPException(status_code=500, detail=f"VPN script '{VPN_SCRIPT_PATH}' not found. Please set VPN_SCRIPT_PATH correctly.")
-    
-    stdout = proc.stdout.strip()
-    stderr = proc.stderr.strip()
-    
+
+    stdout = stdout_bytes.decode().strip()
+    stderr = stderr_bytes.decode().strip()
+    returncode = proc.returncode
+
     # Log the actual output for debugging
-    logging.debug(f"VPN script '{cmd}' on '{connection}': returncode={proc.returncode}, stdout='{stdout}', stderr='{stderr}'")
-    
-    # Your script returns exit code 0 for both success and idempotent operations
-    # It only returns non-zero for actual errors
-    if proc.returncode != 0:
+    logging.debug(f"VPN script '{cmd}' on '{connection}': returncode={returncode}, stdout='{stdout}', stderr='{stderr}'")
+
+    # Map shell exit codes to specific HTTP status codes
+    if returncode != 0:
         error_msg = stderr if stderr else stdout
-        raise HTTPException(status_code=500, detail=f"VPN script failed for '{cmd}' on '{connection}': {error_msg}")
-    
+        # ERR_TUNNELBLICK_NOT_RUNNING=3, ERR_CONNECTION_NOT_FOUND=2, ERR_OPERATION_TIMEOUT=4
+        if returncode == 3:
+            raise HTTPException(status_code=503, detail=f"Tunnelblick is not running: {error_msg}")
+        elif returncode == 2:
+            raise HTTPException(status_code=404, detail=f"VPN connection not found: {error_msg}")
+        elif returncode == 4:
+            raise HTTPException(status_code=504, detail=f"VPN operation timed out: {error_msg}")
+        else:
+            raise HTTPException(status_code=500, detail=f"VPN script failed for '{cmd}' on '{connection}': {error_msg}")
+
     # Exit code 0 means success (including idempotent operations)
     return stdout
 
 
-def _get_status(connection: str) -> Literal["on", "off"]:
+async def _get_status(connection: str) -> Literal["on", "off", "error"]:
     """Always query the actual VPN status."""
     try:
-        out = _run_vpn_cmd("status", connection)
+        out = await _run_vpn_cmd("status", connection)
         logging.debug(f"VPN status output for '{connection}': {out}")
-        
-        # Your script outputs: "Status of 'My VPN': CONNECTED" or "Status of 'My VPN': EXITING"
-        # CONNECTED means on, anything else (EXITING, DISCONNECTED, etc.) means off
-        if "CONNECTED" in out:
+
+        # Script outputs: "Status of 'My VPN': CONNECTED"
+        # Extract the state token after the last colon
+        if ":" in out:
+            state_token = out.rsplit(":", 1)[1].strip()
+        else:
+            state_token = out.strip()
+
+        if state_token == "CONNECTED":
             return "on"
         return "off"
     except HTTPException as e:
         logging.error(f"Failed to get VPN status for '{connection}': {e.detail}")
-        # If we can't get status, assume it's off for safety
-        return "off"
+        return "error"
 
 
-def _ensure_state(connection: str, desired: Literal["on", "off"]) -> Literal["on", "off"]:
-    """Ensure VPN ends in desired state, else raise."""
-    current = _get_status(connection)
-    if current != desired:
+async def _ensure_state(connection: str, desired: Literal["on", "off"], script_timeout: Optional[int] = None) -> Literal["on", "off", "error"]:
+    """Ensure VPN ends in desired state with retry logic, else raise."""
+    max_attempts = 2
+    backoff = 3
+
+    for attempt in range(1, max_attempts + 1):
+        current = await _get_status(connection)
+        if current == "error":
+            if attempt < max_attempts:
+                logging.warning(f"Retry {attempt}/{max_attempts}: status query failed for '{connection}', retrying in {backoff}s")
+                await asyncio.sleep(backoff)
+                continue
+            raise HTTPException(status_code=503, detail=f"Cannot determine VPN status for '{connection}'")
+
+        if current == desired:
+            return current
+
         cmd = "connect" if desired == "on" else "disconnect"
-        _run_vpn_cmd(cmd, connection)
-        final = _get_status(connection)
-        if final != desired:
-            raise HTTPException(status_code=500, detail=f"Failed to {cmd}. Expected '{desired}', got '{final}'")
-        return final
-    return current
+        logging.info(f"Attempt {attempt}/{max_attempts}: {cmd} '{connection}'")
+        await _run_vpn_cmd(cmd, connection, timeout=script_timeout)
+        final = await _get_status(connection)
+
+        if final == desired:
+            return final
+
+        if attempt < max_attempts:
+            logging.warning(f"Retry {attempt}/{max_attempts}: expected '{desired}', got '{final}', retrying in {backoff}s")
+            await asyncio.sleep(backoff)
+
+    raise HTTPException(status_code=500, detail=f"Failed to {cmd}. Expected '{desired}', got '{final}' after {max_attempts} attempts")
 
 # --- Scheduler for revert ---
 async def _schedule_revert_async(connection: str, target_state: Literal["on", "off"], delay: int):
-    """Revert VPN to target state after delay, always checking current state first."""
+    """Revert VPN to target state after delay with aggressive retries (safety net)."""
+    max_attempts = 3
+    backoffs = [5, 10]
+
     try:
         logging.info(f"🕒 Scheduled revert for '{connection}' in {delay} seconds. Task: {asyncio.current_task().get_name()}")
         await asyncio.sleep(delay)
-        
-        # Always check current state before reverting
-        current = _get_status(connection)
-        logging.info(f"⏰ Timeout reached for '{connection}'. Performing emergency revert from '{current}' to '{target_state}'")
-        
-        if current != target_state:
-            cmd = "connect" if target_state == "on" else "disconnect"
-            _run_vpn_cmd(cmd, connection)
-            final = _get_status(connection)
-            logging.info(f"✅ Emergency revert for '{connection}' completed: '{current}' -> '{final}'")
-            # Log successful revert in format expected by workflow script
-            logging.info(f"🔄 VPN REVERT -> HTTP 200, status={final}")
-        else:
-            logging.info(f"✅ No revert needed for '{connection}' - already in target state '{target_state}'")
-            # Log successful revert (no-op) in format expected by workflow script
-            logging.info(f"🔄 VPN REVERT -> HTTP 200, status={current}")
+
+        for attempt in range(1, max_attempts + 1):
+            current = await _get_status(connection)
+            logging.info(f"⏰ Revert attempt {attempt}/{max_attempts} for '{connection}': current='{current}', target='{target_state}'")
+
+            if current == "error":
+                logging.warning(f"Status query returned error on attempt {attempt}/{max_attempts}, will still attempt revert")
+
+            if current == target_state:
+                logging.info(f"✅ No revert needed for '{connection}' - already in target state '{target_state}'")
+                logging.info(f"🔄 VPN REVERT -> HTTP 200, status={current}")
+                return
+
+            try:
+                # _ensure_state itself retries (2 attempts), giving up to 6 shell invocations worst case
+                await _ensure_state(connection, target_state)
+                final = await _get_status(connection)
+                logging.info(f"✅ Emergency revert for '{connection}' completed: '{current}' -> '{final}'")
+                logging.info(f"🔄 VPN REVERT -> HTTP 200, status={final}")
+                return
+            except Exception as inner_e:
+                if attempt < max_attempts:
+                    backoff = backoffs[attempt - 1]
+                    logging.warning(f"Revert attempt {attempt}/{max_attempts} failed for '{connection}': {inner_e}. Retrying in {backoff}s")
+                    await asyncio.sleep(backoff)
+                else:
+                    raise
+
     except asyncio.CancelledError:
         logging.info(f"✅ Revert for '{connection}' was cancelled by a manual call. Scheduled task is exiting.")
     except Exception as e:
-        logging.error(f"❌ Emergency revert task for '{connection}' failed: {e}")
-        # Log failed revert in format expected by workflow script
+        logging.error(f"❌ Emergency revert task for '{connection}' failed after {max_attempts} attempts: {e}")
         logging.error(f"❌ VPN REVERT -> HTTP 500, status=None")
     finally:
         active_vpn_tasks.pop(connection, None)
@@ -155,7 +206,9 @@ async def _schedule_revert_async(connection: str, target_state: Literal["on", "o
 async def vpn_status(connection: str = Query(..., description="VPN connection name")):
     # Strip any extra quotes that might have been added by URL encoding or client
     connection = connection.strip("'").strip('"')
-    status = _get_status(connection)
+    status = await _get_status(connection)
+    if status == "error":
+        raise HTTPException(status_code=503, detail=f"Cannot determine VPN status for '{connection}'")
     return {"connection": connection, "status": status}
 
 @app.put("/vpn")
@@ -171,8 +224,14 @@ async def vpn_control(
     
     # Always get current actual state
     try:
-        current = _get_status(connection)
+        current = await _get_status(connection)
+        if current == "error":
+            action_log = action.upper()
+            logging.error(f"❌ VPN {action_log} -> HTTP 503, status=None")
+            raise HTTPException(status_code=503, detail=f"Cannot determine VPN status for '{connection}'")
         logging.info(f"Current VPN status for '{connection}': {current}")
+    except HTTPException:
+        raise
     except Exception as e:
         logging.error(f"Failed to get current VPN status: {e}")
         action_log = action.upper()
@@ -204,6 +263,25 @@ async def vpn_control(
         # Log success in format expected by workflow script
         action_log = "ON" if action == "on" else "OFF"
         logging.info(f"🔄 VPN {action_log} -> HTTP 200, status={current}")
+
+        # Schedule revert even on noop if timeout was requested
+        # This ensures a cancelled revert is replaced
+        delay = timeout if timeout is not None else VPN_DEFAULT_TIMEOUT
+        if delay and delay > 0:
+            revert_target = "off" if desired_state == "on" else "on"
+            revert_task = asyncio.create_task(
+                _schedule_revert_async(connection, revert_target, delay),
+                name=f"revert-{connection}-{time.time()}"
+            )
+            active_vpn_tasks[connection] = revert_task
+            return {
+                "connection": connection,
+                "status": current,
+                "action": "noop",
+                "will_revert_to": revert_target,
+                "will_revert_in": delay,
+            }
+
         return {"connection": connection, "status": current, "action": "noop"}
     
     # Store the current state as the revert target BEFORE making any changes
@@ -212,8 +290,8 @@ async def vpn_control(
     
     # Perform the state change
     try:
-        _ensure_state(connection, desired_state)
-        new_state = _get_status(connection)  # Verify the change
+        await _ensure_state(connection, desired_state)
+        new_state = await _get_status(connection)  # Verify the change
         logging.info(f"Successfully changed VPN '{connection}' from '{current}' to '{new_state}'")
         
         # Log success in format expected by workflow script
