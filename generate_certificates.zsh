@@ -11,7 +11,7 @@ usage() {
     echo "  --country <value>     Specify country for certificates (default: 'GB')"
     echo "  --state <value>       Specify state for certificates (default: 'England')"
     echo "  --city <value>        Specify city for certificates (default: 'London')"
-    echo "  --org <value>         Specify organization for certificates (default: 'Storizzi')"
+    echo "  --org <value>         Specify organization for certificates (default: 'Example')"
     echo "  --ou <value>          Specify organizational unit for certificates (default: 'ExampleApp')"
     echo "  --email <value>       Specify email for certificates (default: 'simon@example.com')"
     echo ""

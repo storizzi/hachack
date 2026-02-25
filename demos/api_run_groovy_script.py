@@ -20,10 +20,9 @@ PASSWORD = os.getenv("HAC_PASSWORD", "nimda")
 
 # Groovy script to execute
 GROOVY_SCRIPT = """
-configurationService = spring.getBean('configurationService')
-storageConnectionString = configurationService.getConfiguration().getString("example.config.key")
-println "Azure Storage Explorer connection string: $storageConnectionString\\n"
-return "$storageConnectionString\\n"
+println "Hello from HAC Groovy console!"
+println "Java version: ${System.getProperty('java.version')}"
+println "Server time: ${new Date()}"
 """
 
 def execute_groovy():

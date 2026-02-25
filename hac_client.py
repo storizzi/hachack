@@ -2,6 +2,62 @@ import os
 import requests
 from bs4 import BeautifulSoup
 import re
+import json
+
+class DebugConfig:
+    """Granular debug configuration for HAC operations."""
+    
+    def __init__(self, debug=False):
+        # Backward compatibility: if debug=True, enable all debug flags
+        if debug:
+            self.debug_incoming_request = True
+            self.debug_outgoing_request = True
+            self.debug_incoming_data = True
+            self.debug_outgoing_data = True
+        else:
+            # Read from environment variables, defaulting to False
+            self.debug_incoming_request = self._get_bool_env("DEBUG_INCOMING_REQUEST", False)
+            self.debug_outgoing_request = self._get_bool_env("DEBUG_OUTGOING_REQUEST", False)
+            self.debug_incoming_data = self._get_bool_env("DEBUG_INCOMING_DATA", False)
+            self.debug_outgoing_data = self._get_bool_env("DEBUG_OUTGOING_DATA", False)
+    
+    def _get_bool_env(self, env_var, default=False):
+        """Helper to get boolean value from environment variable."""
+        value = os.getenv(env_var, str(default)).lower()
+        return value in ('true', '1', 'yes', 'on')
+    
+    def set_debug(self, debug):
+        """Enable or disable all debug settings (backward compatibility)."""
+        if debug:
+            self.debug_incoming_request = True
+            self.debug_outgoing_request = True
+            self.debug_incoming_data = True
+            self.debug_outgoing_data = True
+        else:
+            self.debug_incoming_request = False
+            self.debug_outgoing_request = False
+            self.debug_incoming_data = False
+            self.debug_outgoing_data = False
+    
+    def log_incoming_request(self, message):
+        """Log incoming API requests."""
+        if self.debug_incoming_request:
+            print(f"[INCOMING_REQUEST] {message}")
+    
+    def log_outgoing_request(self, message):
+        """Log outgoing requests to HAC."""
+        if self.debug_outgoing_request:
+            print(f"[OUTGOING_REQUEST] {message}")
+    
+    def log_incoming_data(self, message):
+        """Log incoming data/responses."""
+        if self.debug_incoming_data:
+            print(f"[INCOMING_DATA] {message}")
+    
+    def log_outgoing_data(self, message):
+        """Log outgoing data/payloads."""
+        if self.debug_outgoing_data:
+            print(f"[OUTGOING_DATA] {message}")
 
 class HACClient:
     """
@@ -18,25 +74,33 @@ class HACClient:
         self.jsessionid = None
         self.authenticated = False  # Track login status
         self.timeout = timeout  # Request timeout in seconds
-        self.debug = debug  # Debug mode flag
+        self.debug_config = DebugConfig(debug)  # Granular debug configuration
 
     def set_debug(self, debug):
-        """Enable or disable debug mode."""
-        self.debug = debug
+        """Enable or disable debug mode (backward compatibility)."""
+        self.debug_config.set_debug(debug)
 
     def _log(self, message):
-        """Prints a debug message if debugging is enabled."""
-        if self.debug:
-            print(message)
+        """Prints a debug message if debugging is enabled (backward compatibility)."""
+        # For backward compatibility, log to all categories if any debug is enabled
+        if any([self.debug_config.debug_incoming_request, 
+                self.debug_config.debug_outgoing_request,
+                self.debug_config.debug_incoming_data, 
+                self.debug_config.debug_outgoing_data]):
+            print(f"[DEBUG] {message}")
 
     def login(self):
         """Logs in to HAC and retrieves session cookies & CSRF token. Always returns a dictionary."""
         try:
             self._log("🔄 Attempting to log in to HAC...")
+            self.debug_config.log_outgoing_request(f"GET {self.hac_url}/login")
 
             # Step 1: Get initial CSRF token
             login_page_url = f"{self.hac_url}/login"
             response = self.session.get(login_page_url, timeout=self.timeout)
+            
+            self.debug_config.log_incoming_request(f"Response status: {response.status_code}")
+            self.debug_config.log_incoming_data(f"Response headers: {dict(response.headers)}")
 
             # ✅ Check for 403 Forbidden (VPN/Downtime Issue)
             if response.status_code == 403:
@@ -63,8 +127,14 @@ class HACClient:
                 "j_password": self.password,
                 "_csrf": self.csrf_token
             }
+            self.debug_config.log_outgoing_data(f"Login payload: {{'j_username': '{self.username}', 'j_password': '[REDACTED]', '_csrf': '{self.csrf_token}'}}")
+            
             login_url = f"{self.hac_url}/j_spring_security_check"
+            self.debug_config.log_outgoing_request(f"POST {login_url}")
             response = self.session.post(login_url, data=login_payload, timeout=self.timeout)
+            
+            self.debug_config.log_incoming_request(f"Response status: {response.status_code}")
+            self.debug_config.log_incoming_data(f"Response headers: {dict(response.headers)}")
 
             # Validate login success
             if "Login failed" in response.text or response.status_code not in [200, 302]:
@@ -95,7 +165,10 @@ class HACClient:
         """Retrieves a fresh CSRF token after login for executing commands."""
         try:
             scripting_url = f"{self.hac_url}/console/scripting"
+            self.debug_config.log_outgoing_request(f"GET {scripting_url}")
             response = self.session.get(scripting_url, timeout=self.timeout)
+            
+            self.debug_config.log_incoming_request(f"Response status: {response.status_code}")
 
             soup = BeautifulSoup(response.text, "html.parser")
             csrf_token_input = soup.find("meta", {"name": "_csrf"})
@@ -135,7 +208,12 @@ class HACClient:
             }
 
             groovy_execute_url = f"{self.hac_url}/console/scripting/execute"
+            self.debug_config.log_outgoing_request(f"POST {groovy_execute_url}")
+            self.debug_config.log_outgoing_data(f"Groovy payload: {{'script': '[SCRIPT_CONTENT]', 'scriptType': 'groovy', 'commit': '{commit}', '_csrf': '{self.csrf_token}'}}")
             response = self.session.post(groovy_execute_url, data=groovy_payload, headers=groovy_headers, timeout=self.timeout)
+            
+            self.debug_config.log_incoming_request(f"Response status: {response.status_code}")
+            self.debug_config.log_incoming_data(f"Response headers: {dict(response.headers)}")
 
             # Parse JSON response
             json_response = response.json()
@@ -148,6 +226,7 @@ class HACClient:
                 }
             else:
                 self._log("✅ Groovy script executed successfully!")
+                self.debug_config.log_incoming_data(f"Execution result: {json_response.get('executionResult', 'No result')}")
                 return {
                     "executionResult": json_response.get("executionResult", "No result"),
                     "outputText": json_response.get("outputText", "No output"),
@@ -211,7 +290,12 @@ class HACClient:
             }
 
             impex_url = f"{self.hac_url}/console/impex/import"
+            self.debug_config.log_outgoing_request(f"POST {impex_url}")
+            self.debug_config.log_outgoing_data(f"ImpEx payload: {{'scriptContent': '[IMPEX_SCRIPT]', 'validationEnum': '{validation}', 'maxThreads': '{max_threads}', 'encoding': '{encoding}', '_csrf': '{self.csrf_token}'}}")
             response = self.session.post(impex_url, data=impex_payload, headers=impex_headers, timeout=self.timeout)
+            
+            self.debug_config.log_incoming_request(f"Response status: {response.status_code}")
+            self.debug_config.log_incoming_data(f"Response headers: {dict(response.headers)}")
 
             return self._process_impex_response(response.text)
 
@@ -248,7 +332,12 @@ class HACClient:
                 }
 
                 impex_url = f"{self.hac_url}/console/impex/import/upload"
+                self.debug_config.log_outgoing_request(f"POST {impex_url}")
+                self.debug_config.log_outgoing_data(f"ImpEx file payload: {{'file': '{os.path.basename(file_path)}', 'encoding': '{encoding}', 'maxThreads': '{max_threads}', 'validationEnum': '{validation}', '_csrf': '{self.csrf_token}'}}")
                 response = self.session.post(impex_url, files=impex_payload, headers=impex_headers, timeout=self.timeout)
+                
+                self.debug_config.log_incoming_request(f"Response status: {response.status_code}")
+                self.debug_config.log_incoming_data(f"Response headers: {dict(response.headers)}")
 
             return self._process_impex_response(response.text)
 

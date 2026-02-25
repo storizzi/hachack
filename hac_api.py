@@ -6,7 +6,7 @@ import asyncio
 import time
 from datetime import datetime
 from typing import Literal, Dict, Optional
-from fastapi import FastAPI, HTTPException, File, UploadFile, Form, Query
+from fastapi import FastAPI, HTTPException, File, UploadFile, Form, Query, Request
 from logging.handlers import TimedRotatingFileHandler
 from dotenv import load_dotenv
 from pydantic import BaseModel
@@ -17,6 +17,17 @@ active_vpn_tasks: Dict[str, asyncio.Task] = {}
 
 # --- Configuration ---
 load_dotenv()
+
+# Debug configuration
+def _get_bool_env(env_var, default=False):
+    """Helper to get boolean value from environment variable."""
+    value = os.getenv(env_var, str(default)).lower()
+    return value in ('true', '1', 'yes', 'on')
+
+DEBUG_INCOMING_REQUEST = _get_bool_env("DEBUG_INCOMING_REQUEST", False)
+DEBUG_OUTGOING_REQUEST = _get_bool_env("DEBUG_OUTGOING_REQUEST", False)
+DEBUG_INCOMING_DATA = _get_bool_env("DEBUG_INCOMING_DATA", False)
+DEBUG_OUTGOING_DATA = _get_bool_env("DEBUG_OUTGOING_DATA", False)
 
 DEFAULT_TIMEOUT = None
 env_timeout = os.getenv("HAC_TIMEOUT")
@@ -50,6 +61,50 @@ app = FastAPI()
 logging.info("🔹 HAC URL Loaded: %s", "Set" if DEFAULT_HAC_URL else "Not Set")
 logging.info("🔹 HAC Username Loaded: %s", "Set" if DEFAULT_USERNAME else "Not Set")
 logging.info("🔹 HAC Password Loaded: %s", "Set" if DEFAULT_PASSWORD else "Not Set")
+logging.info("🔹 Debug - Incoming Request: %s", DEBUG_INCOMING_REQUEST)
+logging.info("🔹 Debug - Outgoing Request: %s", DEBUG_OUTGOING_REQUEST)
+logging.info("🔹 Debug - Incoming Data: %s", DEBUG_INCOMING_DATA)
+logging.info("🔹 Debug - Outgoing Data: %s", DEBUG_OUTGOING_DATA)
+
+# --- Debug logging functions ---
+def log_incoming_request(message):
+    """Log incoming API requests."""
+    if DEBUG_INCOMING_REQUEST:
+        logging.info(f"[INCOMING_REQUEST] {message}")
+
+def log_outgoing_request(message):
+    """Log outgoing requests to HAC."""
+    if DEBUG_OUTGOING_REQUEST:
+        logging.info(f"[OUTGOING_REQUEST] {message}")
+
+def log_incoming_data(message):
+    """Log incoming data/responses."""
+    if DEBUG_INCOMING_DATA:
+        logging.info(f"[INCOMING_DATA] {message}")
+
+def log_outgoing_data(message):
+    """Log outgoing data/payloads."""
+    if DEBUG_OUTGOING_DATA:
+        logging.info(f"[OUTGOING_DATA] {message}")
+
+# --- Middleware for request logging ---
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """Middleware to log incoming requests and responses."""
+    # Log incoming request
+    log_incoming_request(f"{request.method} {request.url}")
+    if DEBUG_INCOMING_REQUEST:
+        client_host = request.client.host if request.client else "unknown"
+        log_incoming_request(f"Client: {client_host}")
+        log_incoming_request(f"Headers: {dict(request.headers)}")
+
+    # Process request
+    response = await call_next(request)
+
+    # Log response
+    log_incoming_request(f"Response status: {response.status_code}")
+
+    return response
 
 # --- Helper to create HAC client ---
 def get_hac_client(hac_url: str = None, username: str = None, password: str = None, timeout: int = None):
@@ -59,7 +114,10 @@ def get_hac_client(hac_url: str = None, username: str = None, password: str = No
     timeout = timeout if timeout is not None else DEFAULT_TIMEOUT
     if not hac_url or not username or not password:
         raise HTTPException(status_code=400, detail="HAC credentials must be provided.")
-    return HACClient(hac_url, username, password, timeout, debug=True)
+
+    # Create HAC client with debug settings from environment
+    debug_enabled = any([DEBUG_INCOMING_REQUEST, DEBUG_OUTGOING_REQUEST, DEBUG_INCOMING_DATA, DEBUG_OUTGOING_DATA])
+    return HACClient(hac_url, username, password, timeout, debug=debug_enabled)
 
 # --- VPN Utility Functions ---
 
@@ -71,6 +129,7 @@ async def _run_vpn_cmd(cmd: str, connection: str, timeout: Optional[int] = None)
     args.extend([cmd, connection])
 
     try:
+        log_outgoing_request(f"VPN command: {cmd} on connection: {connection}")
         proc = await asyncio.create_subprocess_exec(
             *args,
             stdout=asyncio.subprocess.PIPE,
@@ -339,8 +398,14 @@ class LoginRequest(BaseModel):
 @app.post("/login")
 async def login(request: LoginRequest):
     """Login to HAC dynamically with credentials in the JSON body."""
+    log_incoming_request(f"Login request for HAC URL: {request.hac_url}")
+    if DEBUG_INCOMING_DATA:
+        log_incoming_data(f"Login request payload: {{'hac_url': '{request.hac_url}', 'username': '{request.username}', 'password': '[REDACTED]'}}")
+
     hac = get_hac_client(request.hac_url, request.username, request.password)
-    if hac.login().get("success"):
+    result = hac.login()
+
+    if result.get("success"):
         logging.info("✅ Successful HAC login")
         return {"success": True, "message": "Logged in successfully"}
     
@@ -356,12 +421,18 @@ class GroovyRequest(BaseModel):
 @app.post("/execute_groovy")
 async def execute_groovy(request: GroovyRequest):
     """Execute a Groovy script with all parameters in the JSON body."""
+    log_incoming_request(f"Groovy execution request for HAC URL: {request.hac_url}")
+    if DEBUG_INCOMING_DATA:
+        log_incoming_data(f"Groovy request payload: {{'hac_url': '{request.hac_url}', 'username': '{request.username}', 'password': '[REDACTED]', 'script': '[SCRIPT_CONTENT]'}}")
+
     hac = get_hac_client(request.hac_url, request.username, request.password)
     if not hac.is_authenticated():
         if not hac.login().get("success"):
             raise HTTPException(status_code=401, detail="Login failed before executing Groovy script.")
     result = hac.execute_groovy_script(request.script)
     if result:
+        if DEBUG_OUTGOING_DATA:
+            log_outgoing_data(f"Groovy execution result: {result}")
         return result
     raise HTTPException(status_code=500, detail="Groovy script execution failed")
 
@@ -374,12 +445,18 @@ class ImpExRequest(BaseModel):
 @app.post("/import_impex")
 async def import_impex(request: ImpExRequest):
     """Import an ImpEx script dynamically, ensuring authentication first."""
+    log_incoming_request(f"ImpEx import request for HAC URL: {request.hac_url}")
+    if DEBUG_INCOMING_DATA:
+        log_incoming_data(f"ImpEx request payload: {{'hac_url': '{request.hac_url}', 'username': '{request.username}', 'password': '[REDACTED]', 'script': '[IMPEX_SCRIPT]'}}")
+
     hac = get_hac_client(request.hac_url, request.username, request.password)
     if not hac.login().get("success"):  
         raise HTTPException(status_code=401, detail="Login failed before importing ImpEx.")
     result = hac.import_impex(request.script)
     if result and result.get("success"):
         logging.info("✅ ImpEx import completed successfully")
+        if DEBUG_OUTGOING_DATA:
+            log_outgoing_data(f"ImpEx import result: {result}")
         return result
     logging.warning("❌ ImpEx import failed")
     return {"success": False, "impex_result": "Import failed", "impex_details": result.get("impex_details", "Unknown error")}
@@ -393,6 +470,9 @@ async def import_impex_file(
     retain: bool = Form(False)
 ):
     """Upload and import an ImpEx file dynamically, ensuring authentication first."""
+    log_incoming_request(f"ImpEx file import request for HAC URL: {hac_url}")
+    log_incoming_request(f"File: {file.filename}, Retain: {retain}")
+
     hac = get_hac_client(hac_url, username, password)
     if not hac.login().get("success"):  
         raise HTTPException(status_code=401, detail="Login failed before importing ImpEx file.")
@@ -409,6 +489,8 @@ async def import_impex_file(
         logging.info(f"🗂️ Retained ImpEx file: {file_path}")
     if result and result.get("success"):
         logging.info(f"✅ ImpEx file '{new_filename}' imported successfully")
+        if DEBUG_OUTGOING_DATA:
+            log_outgoing_data(f"ImpEx file import result: {result}")
         return {"success": True, "impex_result": result["impex_result"], "file_path": file_path if retain else None}
     logging.warning(f"❌ ImpEx file '{new_filename}' import failed")
     return {"success": False, "impex_result": "Import failed", "impex_details": result.get("impex_details", "Unknown error")}
